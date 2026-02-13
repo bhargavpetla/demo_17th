@@ -2,8 +2,8 @@ import os
 import shutil
 import json
 import asyncio
+import threading
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, UploadFile, File, BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
 from app.config import UPLOAD_DIR, DEMO_DOCS_DIR, MAX_FILE_SIZE_MB
@@ -17,17 +17,31 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 
 DOCS_STORE_PATH = "data/documents.json"
 
+# Thread lock for safe concurrent JSON file access
+_docs_lock = threading.Lock()
+
 # Progress tracking for SSE
 _progress_store: dict[str, list[dict]] = {}
 
 
 def _load_docs() -> dict[str, dict]:
-    data = load_json(DOCS_STORE_PATH)
-    return data or {}
+    with _docs_lock:
+        data = load_json(DOCS_STORE_PATH)
+        return data or {}
 
 
 def _save_docs(docs: dict[str, dict]):
-    save_json(DOCS_STORE_PATH, docs)
+    with _docs_lock:
+        save_json(DOCS_STORE_PATH, docs)
+
+
+def _update_doc(doc_id: str, updates: dict):
+    """Thread-safe update of a single document's fields."""
+    with _docs_lock:
+        data = load_json(DOCS_STORE_PATH) or {}
+        if doc_id in data:
+            data[doc_id].update(updates)
+            save_json(DOCS_STORE_PATH, data)
 
 
 def _emit_progress(doc_id: str, step: str, status: str, detail: str = "", progress: int = 0):
@@ -46,49 +60,37 @@ def _emit_progress(doc_id: str, step: str, status: str, detail: str = "", progre
 
 def _process_document(doc_id: str, filepath: str, filename: str):
     """Background task: extract text, chunk, embed, store in ChromaDB, and run extraction."""
-    docs = _load_docs()
     try:
-        docs[doc_id]["status"] = "processing"
-        _save_docs(docs)
+        _update_doc(doc_id, {"status": "processing"})
 
         # Step 1: Extract text
         _emit_progress(doc_id, "text_extraction", "started", f"Extracting text from {filename}...", 10)
         pages = extract_text_with_pages(filepath)
         page_count = len(pages)
-        _emit_progress(doc_id, "text_extraction", "completed", f"Extracted text from {page_count} pages", 25)
+        _emit_progress(doc_id, "text_extraction", "completed", f"Extracted {page_count} pages", 25)
 
         # Step 2: Chunking & embedding
-        _emit_progress(doc_id, "embedding", "started", "Chunking text and generating embeddings...", 30)
+        _emit_progress(doc_id, "embedding", "started", "Generating embeddings...", 35)
         add_document_to_store(doc_id, filename, pages)
-        _emit_progress(doc_id, "embedding", "completed", "Document indexed in vector database", 60)
+        _emit_progress(doc_id, "embedding", "completed", "Indexed in vector database", 60)
 
         # Step 3: AI extraction
-        _emit_progress(doc_id, "ai_extraction", "started", "Running AI analysis to extract key data...", 65)
+        _emit_progress(doc_id, "ai_extraction", "started", "AI analysis in progress...", 65)
         extract_document(doc_id, filepath)
         _emit_progress(doc_id, "ai_extraction", "completed", "AI extraction complete", 95)
 
         # Step 4: Done
-        docs = _load_docs()
-        docs[doc_id]["status"] = "processed"
-        docs[doc_id]["page_count"] = page_count
-        _save_docs(docs)
-        _emit_progress(doc_id, "done", "completed", "Document fully processed!", 100)
+        _update_doc(doc_id, {"status": "processed", "page_count": page_count})
+        _emit_progress(doc_id, "done", "completed", "Done!", 100)
     except Exception as e:
-        docs = _load_docs()
-        docs[doc_id]["status"] = "error"
-        docs[doc_id]["error_message"] = str(e)
-        _save_docs(docs)
+        _update_doc(doc_id, {"status": "error", "error_message": str(e)})
         _emit_progress(doc_id, "error", "error", str(e), 0)
 
 
-def _process_documents_parallel(doc_tasks: list[tuple[str, str, str]]):
-    """Process multiple documents in parallel using threads."""
-    with ThreadPoolExecutor(max_workers=min(len(doc_tasks), 5)) as executor:
-        futures = []
-        for doc_id, filepath, filename in doc_tasks:
-            futures.append(executor.submit(_process_document, doc_id, filepath, filename))
-        for f in futures:
-            f.result()
+def _process_documents_sequential(doc_tasks: list[tuple[str, str, str]]):
+    """Process documents one at a time to avoid OpenAI rate limits and file race conditions."""
+    for doc_id, filepath, filename in doc_tasks:
+        _process_document(doc_id, filepath, filename)
 
 
 @router.post("/upload", response_model=list[DocumentMetadata])
@@ -130,12 +132,12 @@ async def upload_documents(
         docs[doc_id] = doc_meta.model_dump()
         _save_docs(docs)
 
-        _emit_progress(doc_id, "upload", "completed", f"File uploaded: {file.filename}", 5)
+        _emit_progress(doc_id, "upload", "completed", f"Uploaded: {file.filename}", 5)
         doc_tasks.append((doc_id, filepath, file.filename))
         results.append(doc_meta)
 
     if doc_tasks:
-        background_tasks.add_task(_process_documents_parallel, doc_tasks)
+        background_tasks.add_task(_process_documents_sequential, doc_tasks)
 
     return results
 
@@ -173,7 +175,7 @@ async def stream_progress():
             if idle_count > 300:
                 break
 
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.5)
 
     return StreamingResponse(
         event_stream(),
@@ -221,6 +223,28 @@ async def delete_document(doc_id: str):
     return {"message": "Document deleted"}
 
 
+@router.delete("")
+async def delete_all_documents():
+    """Delete all documents and reset."""
+    docs = _load_docs()
+    for doc_id, doc_data in list(docs.items()):
+        try:
+            delete_document_from_store(doc_id)
+        except Exception:
+            pass
+        filepath = os.path.join(UPLOAD_DIR, doc_data.get("filename", ""))
+        if os.path.exists(filepath):
+            os.remove(filepath)
+        for subdir in ["extractions", "faqs"]:
+            path = os.path.join("data", subdir, f"{doc_id}.json")
+            if os.path.exists(path):
+                os.remove(path)
+
+    _save_docs({})
+    _progress_store.clear()
+    return {"message": "All documents deleted"}
+
+
 @router.post("/demo/load", response_model=list[DocumentMetadata])
 async def load_demo_documents(background_tasks: BackgroundTasks):
     """Load the 5 demo VC memo documents."""
@@ -255,11 +279,11 @@ async def load_demo_documents(background_tasks: BackgroundTasks):
         docs[doc_id] = doc_meta.model_dump()
         _save_docs(docs)
 
-        _emit_progress(doc_id, "upload", "completed", f"Demo file loaded: {filename}", 5)
+        _emit_progress(doc_id, "upload", "completed", f"Loaded: {filename}", 5)
         doc_tasks.append((doc_id, dest_path, filename))
         results.append(doc_meta)
 
     if doc_tasks:
-        background_tasks.add_task(_process_documents_parallel, doc_tasks)
+        background_tasks.add_task(_process_documents_sequential, doc_tasks)
 
     return results

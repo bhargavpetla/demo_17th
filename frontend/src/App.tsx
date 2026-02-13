@@ -1,26 +1,21 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import Header from './components/common/Header';
-import UploadPage from './pages/UploadPage';
+import Layout from './components/common/Layout';
+import QAPage from './pages/QAPage';
 import ExtractionPage from './pages/ExtractionPage';
 import ComparisonPage from './pages/ComparisonPage';
-import QAPage from './pages/QAPage';
 import FAQPage from './pages/FAQPage';
 
 export default function App() {
   return (
     <BrowserRouter>
-      <div className="min-h-screen bg-gray-50">
-        <Header />
-        <main>
-          <Routes>
-            <Route path="/" element={<UploadPage />} />
-            <Route path="/extraction" element={<ExtractionPage />} />
-            <Route path="/comparison" element={<ComparisonPage />} />
-            <Route path="/qa" element={<QAPage />} />
-            <Route path="/faq" element={<FAQPage />} />
-          </Routes>
-        </main>
-      </div>
+      <Routes>
+        <Route element={<Layout />}>
+          <Route path="/" element={<QAPage />} />
+          <Route path="/results" element={<ExtractionPage />} />
+          <Route path="/comparison" element={<ComparisonPage />} />
+          <Route path="/faq" element={<FAQPage />} />
+        </Route>
+      </Routes>
     </BrowserRouter>
   );
 }
