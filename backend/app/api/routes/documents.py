@@ -245,6 +245,50 @@ async def delete_all_documents():
     return {"message": "All documents deleted"}
 
 
+@router.post("/reprocess/{doc_id}")
+async def reprocess_document(doc_id: str, background_tasks: BackgroundTasks):
+    """Reprocess a document (re-extract text, re-embed, re-extract with AI)."""
+    docs = _load_docs()
+    if doc_id not in docs:
+        raise HTTPException(404, "Document not found")
+
+    doc = docs[doc_id]
+    filepath = os.path.join(UPLOAD_DIR, doc["filename"])
+    if not os.path.exists(filepath):
+        raise HTTPException(404, "Document file not found on disk")
+
+    try:
+        delete_document_from_store(doc_id)
+    except Exception:
+        pass
+
+    _update_doc(doc_id, {"status": "uploaded"})
+    background_tasks.add_task(_process_documents_sequential, [(doc_id, filepath, doc["original_filename"])])
+    return {"message": f"Reprocessing {doc['original_filename']}"}
+
+
+@router.post("/reprocess-all")
+async def reprocess_all_documents(background_tasks: BackgroundTasks):
+    """Reprocess all documents."""
+    docs = _load_docs()
+    doc_tasks = []
+    for doc_id, doc in docs.items():
+        filepath = os.path.join(UPLOAD_DIR, doc["filename"])
+        if not os.path.exists(filepath):
+            continue
+        try:
+            delete_document_from_store(doc_id)
+        except Exception:
+            pass
+        _update_doc(doc_id, {"status": "uploaded"})
+        doc_tasks.append((doc_id, filepath, doc["original_filename"]))
+
+    if doc_tasks:
+        background_tasks.add_task(_process_documents_sequential, doc_tasks)
+
+    return {"message": f"Reprocessing {len(doc_tasks)} documents"}
+
+
 @router.post("/demo/load", response_model=list[DocumentMetadata])
 async def load_demo_documents(background_tasks: BackgroundTasks):
     """Load the 5 demo VC memo documents."""

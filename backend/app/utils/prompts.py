@@ -81,10 +81,12 @@ Questions:
 19. What partnerships exist?
 20. What are the next 12-month goals?
 
-Return a JSON array:
-[
-  {{"question": "...", "answer": "..."}},
-  ...
-]
+Return a JSON object with a "faqs" key containing an array of 20 items:
+{{
+  "faqs": [
+    {{"question": "...", "answer": "..."}},
+    ...
+  ]
+}}
 
-Return ONLY valid JSON array with exactly 20 items."""
+Return ONLY valid JSON with exactly 20 FAQ items in the "faqs" array."""

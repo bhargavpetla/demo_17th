@@ -1,0 +1,24 @@
+# Render configuration for both backend (FastAPI) and frontend (Vite React)
+
+services:
+  - type: web
+    name: backend
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port 10000
+    envVars:
+      - key: PORT
+        value: 10000
+    rootDir: backend
+
+  - type: web
+    name: frontend
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm run preview -- --port 3000
+    rootDir: frontend
+    envVars:
+      - key: PORT
+        value: 3000

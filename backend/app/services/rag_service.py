@@ -79,25 +79,41 @@ def answer_question_streaming(question: str, doc_ids: list[str] | None = None):
 
 
 def generate_suggested_questions() -> list[str]:
-    """Generate contextual suggested questions based on what documents are available."""
+    """Generate contextual suggested questions based on what documents are actually in the vector store."""
     try:
         collection = get_collection()
         count = collection.count()
         if count == 0:
             return []
 
-        # Return context-aware questions
-        return [
-            "Which company has the highest revenue?",
-            "Compare the TAM of all companies",
-            "What are the common risks across all memos?",
-            "Which startup requires the least funding?",
-            "Who are the strongest founding teams?",
-            "Which company has the best unit economics?",
-        ]
+        # Get unique document names from ChromaDB
+        results = collection.get(limit=min(count, 200), include=["metadatas"])
+        doc_names = list({m.get("doc_name", "") for m in results["metadatas"] if m.get("doc_name")})
+
+        if not doc_names:
+            return []
+
+        # Build dynamic questions based on actual documents
+        questions = []
+        if len(doc_names) == 1:
+            name = doc_names[0]
+            questions = [
+                f"What is {name} about?",
+                f"What are the key risks mentioned in {name}?",
+                f"What is the business model described in {name}?",
+                f"What traction metrics are in {name}?",
+                f"What is the funding ask in {name}?",
+            ]
+        else:
+            names_str = ", ".join(doc_names[:5])
+            questions = [
+                f"Compare the business models across {names_str}",
+                f"Which company has the strongest traction?",
+                f"What are the common risks across all documents?",
+                f"Compare the TAM of all companies",
+                f"Which company requires the least funding?",
+                f"Who are the founders and their backgrounds?",
+            ]
+        return questions
     except Exception:
-        return [
-            "Which company has the highest revenue?",
-            "Compare the TAM of all companies",
-            "What are the common risks across all memos?",
-        ]
+        return []

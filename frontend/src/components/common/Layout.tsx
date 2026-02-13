@@ -35,6 +35,17 @@ export default function Layout() {
     loadSessions();
   }, []);
 
+  // Poll for document status updates when any doc is still processing/uploaded
+  useEffect(() => {
+    const hasProcessing = documents.some(d => d.status === 'uploaded' || d.status === 'processing');
+    if (!hasProcessing) return;
+
+    const interval = setInterval(() => {
+      loadDocuments();
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [documents]);
+
   const loadDocuments = async () => {
     try {
       const data = await listDocuments();

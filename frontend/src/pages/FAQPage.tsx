@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronDown, ChevronRight, Loader2, RefreshCw, Search } from 'lucide-react';
 import { listDocuments, getFAQs, generateFAQs } from '../api/client';
@@ -13,6 +13,7 @@ export default function FAQPage() {
   const [generating, setGenerating] = useState(false);
   const [search, setSearch] = useState('');
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set([0, 1, 2]));
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     listDocuments().then(res => {
@@ -29,21 +30,50 @@ export default function FAQPage() {
     if (!selectedDocId) return;
     setLoading(true);
     getFAQs(selectedDocId)
-      .then(setFaqData)
+      .then(data => {
+        setFaqData(data);
+        if (data.status === 'generating') {
+          setGenerating(true);
+          startPolling(selectedDocId);
+        }
+      })
       .catch(() => setFaqData(null))
       .finally(() => setLoading(false));
+
+    return () => stopPolling();
   }, [selectedDocId]);
 
+  const stopPolling = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  };
+
+  const startPolling = (docId: string) => {
+    stopPolling();
+    pollRef.current = setInterval(async () => {
+      try {
+        const data = await getFAQs(docId);
+        if (data.status === 'completed' || data.status === 'error') {
+          setFaqData(data);
+          setGenerating(false);
+          setExpandedIds(new Set([0, 1, 2]));
+          stopPolling();
+        }
+      } catch { /* ignore */ }
+    }, 2000);
+  };
+
   const handleGenerate = async () => {
-    if (!selectedDocId) return;
+    if (!selectedDocId || generating) return;
     setGenerating(true);
     try {
-      const result = await generateFAQs(selectedDocId);
-      setFaqData(result);
-      setExpandedIds(new Set([0, 1, 2]));
+      await generateFAQs(selectedDocId);
+      // Start polling for completion
+      startPolling(selectedDocId);
     } catch (err) {
       console.error('FAQ generation failed:', err);
-    } finally {
       setGenerating(false);
     }
   };
@@ -131,12 +161,28 @@ export default function FAQPage() {
         </div>
       )}
 
-      {/* FAQ loading */}
+      {/* FAQ content */}
       {loading ? (
         <div className="flex items-center justify-center py-16">
           <Loader2 className="w-6 h-6 text-primary-500 animate-spin" />
         </div>
-      ) : !faqData || faqData.status === 'pending' ? (
+      ) : generating ? (
+        <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
+          <Loader2 className="w-10 h-10 text-primary-500 animate-spin mx-auto mb-4" />
+          <p className="text-gray-700 font-medium mb-1">Generating 20 Investor FAQs...</p>
+          <p className="text-gray-400 text-sm">AI is analyzing the document. This may take 30-60 seconds.</p>
+        </div>
+      ) : faqData?.status === 'error' ? (
+        <div className="bg-white rounded-xl border border-red-200 p-12 text-center">
+          <p className="text-red-600 mb-4">FAQ generation failed. Please try again.</p>
+          <button
+            onClick={handleGenerate}
+            className="bg-primary-600 text-white px-6 py-2.5 rounded-lg font-medium hover:bg-primary-700 transition-colors"
+          >
+            Retry Generation
+          </button>
+        </div>
+      ) : !faqData || faqData.status === 'pending' || (faqData.faqs || []).length === 0 ? (
         <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
           <p className="text-gray-500 mb-4">No FAQs generated yet for this document.</p>
           <button
