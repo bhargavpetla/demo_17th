@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    container_name: vc-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - CHROMA_DB_PATH=/app/chroma_db
+      - UPLOAD_DIR=/app/uploads
+      - DEMO_DOCS_DIR=/app/demo_documents
+    volumes:
+      - backend-uploads:/app/uploads
+      - backend-chroma:/app/chroma_db
+      - backend-data:/app/data
+    networks:
+      - vc-network
+
+  frontend:
+    build: ./frontend
+    container_name: vc-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - vc-network
+
+volumes:
+  backend-uploads:
+  backend-chroma:
+  backend-data:
+
+networks:
+  vc-network:
+    driver: bridge
