@@ -2,10 +2,13 @@ import os
 import shutil
 import json
 import asyncio
+import logging
 import threading
 from datetime import datetime
 from fastapi import APIRouter, UploadFile, File, BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
+
+logger = logging.getLogger(__name__)
 from app.config import UPLOAD_DIR, DEMO_DOCS_DIR, MAX_FILE_SIZE_MB
 from app.models.document import DocumentMetadata, DocumentListResponse
 from app.services.pdf_processor import extract_text_with_pages, get_page_count
@@ -62,27 +65,35 @@ def _process_document(doc_id: str, filepath: str, filename: str):
     """Background task: extract text, chunk, embed, store in ChromaDB, and run extraction."""
     try:
         _update_doc(doc_id, {"status": "processing"})
+        logger.info(f"[{doc_id}] Starting processing: {filename}")
 
         # Step 1: Extract text
         _emit_progress(doc_id, "text_extraction", "started", f"Extracting text from {filename}...", 10)
         pages = extract_text_with_pages(filepath)
         page_count = len(pages)
+        logger.info(f"[{doc_id}] Text extracted: {page_count} pages")
         _emit_progress(doc_id, "text_extraction", "completed", f"Extracted {page_count} pages", 25)
 
         # Step 2: Chunking & embedding
         _emit_progress(doc_id, "embedding", "started", "Generating embeddings...", 35)
+        logger.info(f"[{doc_id}] Starting embedding generation...")
         add_document_to_store(doc_id, filename, pages)
+        logger.info(f"[{doc_id}] Embeddings complete")
         _emit_progress(doc_id, "embedding", "completed", "Indexed in vector database", 60)
 
         # Step 3: AI extraction
         _emit_progress(doc_id, "ai_extraction", "started", "AI analysis in progress...", 65)
+        logger.info(f"[{doc_id}] Starting AI extraction...")
         extract_document(doc_id, filepath)
+        logger.info(f"[{doc_id}] AI extraction complete")
         _emit_progress(doc_id, "ai_extraction", "completed", "AI extraction complete", 95)
 
         # Step 4: Done
         _update_doc(doc_id, {"status": "processed", "page_count": page_count})
         _emit_progress(doc_id, "done", "completed", "Done!", 100)
+        logger.info(f"[{doc_id}] Processing complete!")
     except Exception as e:
+        logger.exception(f"Error processing document {doc_id} ({filename}): {e}")
         _update_doc(doc_id, {"status": "error", "error_message": str(e)})
         _emit_progress(doc_id, "error", "error", str(e), 0)
 
