@@ -10,6 +10,6 @@ COPY demo_documents/ ./demo_documents/
 
 RUN mkdir -p uploads chroma_db data/extractions data/faqs
 
-EXPOSE 8000
+EXPOSE 10000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000}"]
