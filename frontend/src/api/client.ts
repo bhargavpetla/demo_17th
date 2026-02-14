@@ -1,8 +1,12 @@
 import axios from 'axios';
 import type { DocumentMetadata, ExtractionResult, QAResponse, QAHistoryItem, FAQResponse } from '../types';
 
+const API_BASE = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL}/api/v1`
+  : '/api/v1';
+
 const api = axios.create({
-  baseURL: '/api/v1',
+  baseURL: API_BASE,
   timeout: 120000,
 });
 
@@ -55,7 +59,7 @@ export async function askQuestionStreaming(
   onSources: (sources: QAResponse['sources']) => void,
   onDone: () => void,
 ) {
-  const response = await fetch('/api/v1/qa/ask/stream', {
+  const response = await fetch(`${API_BASE}/qa/ask/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ question, doc_ids: docIds }),
@@ -135,7 +139,7 @@ export async function getFAQs(docId: string): Promise<FAQResponse> {
 
 // Progress streaming
 export function streamProgress(onEvent: (event: { doc_id: string; step: string; status: string; detail: string; progress: number }) => void): () => void {
-  const eventSource = new EventSource('/api/v1/documents/progress/stream');
+  const eventSource = new EventSource(`${API_BASE}/documents/progress/stream`);
 
   eventSource.onmessage = (event) => {
     try {
